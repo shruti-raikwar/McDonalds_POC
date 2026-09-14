@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { env } from '../config/env';
-import type { CampaignRequest, CampaignResponse } from '../types/campaign.types';
+import { API_ENDPOINTS } from './endpoints';
+import type { CreateBriefCampaignRequest, CampaignResponse } from '../types/campaign.types';
 
 export const campaignApi = axios.create({
   baseURL: env.campaignApiBaseUrl,
@@ -10,24 +11,29 @@ export const campaignApi = axios.create({
   },
 });
 
-export const generateCampaign = async (payload: CampaignRequest): Promise<CampaignResponse> => {
+export const generateCampaign = async (payload: CreateBriefCampaignRequest): Promise<CampaignResponse> => {
   try {
-    const response = await campaignApi.post<CampaignResponse>('/api/campaigns', payload);
+    const response = await campaignApi.post<CampaignResponse>(API_ENDPOINTS.CAMPAIGN_BRIEF, payload);
 
     if (response.data && typeof response.data === 'object') {
       return response.data;
     }
 
-    return {
-      status: 'unknown',
-      business_goal: payload.business_goal,
-      error: 'The campaign service returned an empty payload.',
-    };
+    throw new Error('Unexpected Campaign API response received.');
   } catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Unexpected Campaign API response received.') {
+      throw error;
+    }
+
     const axiosError = error as AxiosError;
 
     if (axiosError.code === 'ERR_NETWORK' || !axiosError.response) {
-      throw new Error('Unable to connect to the Business Goal campaign service. Verify that the backend is running on port 8001.');
+      throw new Error('Unable to generate the campaign brief. Please verify that the Campaign Brief API is running and try again.');
+    }
+
+    if (axiosError.response?.status === 422) {
+      if (import.meta.env.DEV) console.error('Campaign Brief API validation details:', axiosError.response.data);
+      throw new Error('Unable to generate the campaign brief. Please verify that the Campaign Brief API is running and try again.');
     }
 
     const responseData = axiosError.response?.data as { detail?: string; error?: string; message?: string } | undefined;
@@ -36,7 +42,7 @@ export const generateCampaign = async (payload: CampaignRequest): Promise<Campai
         ? responseData.detail ?? responseData.error ?? responseData.message ?? axiosError.message
         : axiosError.message;
 
-    throw new Error(backendError || 'Failed to generate a campaign brief.');
+    throw new Error(backendError || 'Unable to generate the campaign brief. Please verify that the Campaign Brief API is running and try again.');
   }
 };
 

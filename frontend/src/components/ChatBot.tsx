@@ -59,11 +59,7 @@ export const ChatBot: React.FC = () => {
         <div style={{ marginTop: 16, padding: 16, background: '#f3f4f6', borderRadius: 8 }}>
           <strong>AI Response:</strong>
           <p style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>
-            {typeof response.response === 'string'
-              ? response.response
-              : typeof response.message === 'string'
-                ? response.message
-                : JSON.stringify(response, null, 2)}
+            {response.final_response || response.draft_brief || "I couldn't generate a response."}
           </p>
         </div>
       )}

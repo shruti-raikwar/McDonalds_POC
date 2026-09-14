@@ -32,6 +32,9 @@ export interface BriefData {
 
 export type AiDrawerMode = 'general' | 'business-goal' | 'briefing' | 'research' | 'audiences' | 'analysis';
 
+export type AssistantSourcePage = 'createBrief' | 'dashboard';
+export type AssistantContext = 'briefing' | 'insight' | 'segment';
+
 export interface AppState {
     user: AppUser | null;
     selectedInsights: Insight[];
@@ -40,4 +43,6 @@ export interface AppState {
     aiDrawerQuery: string;
     aiDrawerMode: AiDrawerMode;
     aiDrawerSessionId: string | null;
+    assistantSourcePage: AssistantSourcePage | null;
+    assistantContext: AssistantContext | null;
 }

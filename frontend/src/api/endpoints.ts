@@ -1,4 +1,5 @@
 export const API_ENDPOINTS = Object.freeze({
   HEALTH: '/health',
-  CHAT: '/chat',
+  DASHBOARD_CAMPAIGNS: '/campaign',
+  CAMPAIGN_BRIEF: '/api/campaigns',
 });
