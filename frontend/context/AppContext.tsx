@@ -23,6 +23,10 @@ interface AppContextType extends AppState {
     setAiDrawerOpen: (isOpen: boolean) => void;
     setAiDrawerQuery: (query: string) => void;
     setAiDrawerMode: (mode: AiDrawerMode) => void;
+    suggestedQuestions: string[];
+    areSuggestedQuestionsLoading: boolean;
+    setSuggestedQuestions: (questions: string[]) => void;
+    setSuggestedQuestionsLoading: (isLoading: boolean) => void;
     resetAiDrawerSession: (mode: AiDrawerMode) => void;
     openAiTool: (mode: Extract<AiDrawerMode, 'briefing' | 'research' | 'audiences' | 'analysis'>) => void;
     setAssistantContext: (sourcePage: AssistantSourcePage, context: AssistantContext, sessionId?: string | null) => void;
@@ -44,6 +48,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [aiDrawerSessionId, setAiDrawerSessionId] = useState<string | null>(null);
     const [assistantSourcePage, setAssistantSourcePage] = useState<AssistantSourcePage | null>(null);
     const [assistantContext, setAssistantContextState] = useState<AssistantContext | null>(null);
+    const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+    const [areSuggestedQuestionsLoading, setSuggestedQuestionsLoading] = useState(false);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -154,6 +160,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             aiDrawerSessionId,
             assistantSourcePage,
             assistantContext,
+            suggestedQuestions,
+            areSuggestedQuestionsLoading,
             signUp,
             signIn,
             logout,
@@ -163,6 +171,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setAiDrawerOpen,
             setAiDrawerQuery,
             setAiDrawerMode,
+            setSuggestedQuestions,
+            setSuggestedQuestionsLoading,
             resetAiDrawerSession,
             openAiTool,
             setAssistantContext,

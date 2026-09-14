@@ -7,10 +7,11 @@ import { useAppContext } from '../../context/AppContext';
 import { MOCK_NEWS, PERFORMANCE_DATA } from '../../constants/app.constants';
 import { DASHBOARD_CONTENT } from '../../content/dashboard.content';
 import { ROUTES } from '../../routes/routePaths';
+import { apiClient } from '../../src/api/client';
 
 export const DashboardPage: React.FC = () => {
     const { user, reloadUser } = useAuth();
-    const { setAiDrawerOpen, setAiDrawerQuery, openAiTool } = useAppContext();
+    const { setAiDrawerOpen, setAiDrawerQuery, openAiTool, setSuggestedQuestions, setSuggestedQuestionsLoading } = useAppContext();
     const navigate = useNavigate();
     const [searchQuery, setSearchQuery] = useState('');
     const content = DASHBOARD_CONTENT;
@@ -29,15 +30,33 @@ export const DashboardPage: React.FC = () => {
         }
     };
 
+    const openDashboardAssistant = async (mode: 'research' | 'audiences') => {
+        openAiTool(mode);
+        setSuggestedQuestions([]);
+        setSuggestedQuestionsLoading(true);
+
+        try {
+            const response = await apiClient.post<{ follow_up_questions?: string[] }>('/follow-up-questions', {
+                agent_call: mode === 'research' ? 'insight' : 'segment',
+            });
+            setSuggestedQuestions(Array.isArray(response.data.follow_up_questions) ? response.data.follow_up_questions : []);
+        } catch {
+            console.log('Failed to load suggested questions.');
+            setSuggestedQuestions([]);
+        } finally {
+            setSuggestedQuestionsLoading(false);
+        }
+    };
+
     const tools = content.tools.map(tool => ({
         ...tool,
         icon: tool.id === 'briefing' ? FileText : tool.id === 'research' ? Lightbulb : tool.id === 'audiences' ? Users : BarChart2,
         action: tool.id === 'briefing'
             ? () => navigate(ROUTES.CREATE_BRIEF)
             : tool.id === 'research'
-                ? () => openAiTool('research')
+                ? () => void openDashboardAssistant('research')
                 : tool.id === 'audiences'
-                    ? () => openAiTool('audiences')
+                    ? () => void openDashboardAssistant('audiences')
                     : undefined
     }));
 

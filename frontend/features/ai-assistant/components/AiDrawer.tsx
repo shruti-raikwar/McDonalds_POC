@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowRight, Sparkles, X } from 'lucide-react';
@@ -32,6 +33,11 @@ type DrawerMessage = {
   text?: string;
   preview?: CampaignPreview;
 };
+
+interface CampaignFollowUpResponse {
+  agent_call: string;
+  questions: string[];
+}
 
 const TOOL_WELCOME_MESSAGES: Record<Extract<AiDrawerMode, 'briefing' | 'research' | 'audiences' | 'analysis'>, string> = {
   briefing: '👋 Welcome to Brief Assistant.\n\nI\'m here to help you create a complete Feel Brief.\n\nI can help you:\n\n• Create campaign briefs\n• Define business goals\n• Generate marketing goals\n• Identify target audiences\n• Generate messaging and propositions\n• Recommend channels\n• Suggest KPIs and executional mandatories\n\nTry asking:\n\n"Create a campaign brief for a spicy chicken wrap"\n\n"Generate a breakfast campaign brief"\n\n"Help define my target audience"\n\n"Generate marketing goals"\n\n"Recommend messaging and channels"',
@@ -140,7 +146,7 @@ const isSuccessfulResponse = (response: CampaignResponse | null | undefined): bo
 };
 
 export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
-  const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId, assistantSourcePage, assistantContext, setAiDrawerMode, briefDraft, updateBriefData } = useAppContext();
+  const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId, assistantSourcePage, assistantContext, setAiDrawerMode, briefDraft, updateBriefData, suggestedQuestions: dashboardSuggestedQuestions, areSuggestedQuestionsLoading: areDashboardSuggestedQuestionsLoading } = useAppContext();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { sendMessage, isLoading, reset: resetChat } = useChat(
@@ -154,9 +160,12 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   const [isTyping, setIsTyping] = useState(false);
   const [showAction, setShowAction] = useState(false);
   const [pendingCampaignResponse, setPendingCampaignResponse] = useState<CampaignResponse | null>(null);
+  const [briefSuggestedQuestions, setBriefSuggestedQuestions] = useState<string[]>([]);
+  const [isBriefSuggestionsLoading, setIsBriefSuggestionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const hasLoadedBriefFollowUpsRef = useRef(false);
 
   const isToolMode = aiDrawerMode in TOOL_WELCOME_MESSAGES;
 
@@ -180,6 +189,51 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   useEffect(() => {
     setBusinessGoalInput(briefDraft.businessGoal);
   }, [briefDraft.businessGoal]);
+
+  useEffect(() => {
+    if (!embedded || assistantSourcePage !== 'createBrief') {
+      hasLoadedBriefFollowUpsRef.current = false;
+    }
+
+    if (isAiDrawerOpen) console.log('AI Drawer opened');
+    console.log('createBriefPage mounted');
+    console.log('AI Drawer Open:', isAiDrawerOpen);
+    console.log('assistantMode:', aiDrawerMode);
+    console.log('assistantSourcePage:', assistantSourcePage);
+
+    if (assistantSourcePage !== 'createBrief' || !isAiDrawerOpen || aiDrawerMode !== 'briefing' || hasLoadedBriefFollowUpsRef.current) return;
+
+    hasLoadedBriefFollowUpsRef.current = true;
+    setIsBriefSuggestionsLoading(true);
+    console.log('createBrief briefing suggestions triggered');
+    console.log({ assistantSourcePage, aiDrawerMode, isAiDrawerOpen, embedded });
+    console.log('Loading briefing follow-up questions');
+
+    const loadBriefFollowUpQuestions = async () => {
+      try {
+        console.log('Calling API', {
+          url: 'http://127.0.0.1:8001/api/campaign_followups',
+          payload: {
+            agent_call: 'brief',
+          },
+        });
+        const response = await axios.post<CampaignFollowUpResponse>(
+          'http://127.0.0.1:8001/api/campaign_followups',
+          { agent_call: 'brief' },
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+        console.log('Follow-up response', response);
+        setBriefSuggestedQuestions(Array.isArray(response.data.questions) ? response.data.questions : []);
+      } catch {
+        console.warn('Failed to load campaign follow-up questions.');
+        setBriefSuggestedQuestions([]);
+      } finally {
+        setIsBriefSuggestionsLoading(false);
+      }
+    };
+
+    void loadBriefFollowUpQuestions();
+  }, [aiDrawerMode, assistantSourcePage, isAiDrawerOpen]);
 
   useEffect(() => {
     if (aiDrawerMode !== 'general') {
@@ -227,8 +281,8 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleGeneralSendMessage = async () => {
-    const trimmedInput = chatInput.trim();
+  const handleGeneralSendMessage = async (question?: string) => {
+    const trimmedInput = (question ?? chatInput).trim();
     if (!trimmedInput || isLoading || isTyping || (aiDrawerMode !== 'general' && !isToolMode)) return;
     if (assistantSourcePage === 'createBrief' && aiDrawerMode === 'briefing') {
       console.log('Current Page', assistantSourcePage);
@@ -514,6 +568,53 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                 <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                 <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
               </div>
+            </div>
+          )}
+
+          {assistantSourcePage === 'dashboard' && (aiDrawerMode === 'research' || aiDrawerMode === 'audiences') && (
+            <div className="flex flex-col gap-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Suggested Questions</div>
+              {areDashboardSuggestedQuestionsLoading ? (
+                <div className="text-sm text-gray-500">Loading suggestions...</div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {dashboardSuggestedQuestions.map((question) => (
+                    <button
+                      key={question}
+                      type="button"
+                      onClick={() => void handleGeneralSendMessage(question)}
+                      disabled={isLoading || isTyping}
+                      className="rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {question}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {assistantSourcePage === 'createBrief' && aiDrawerMode === 'briefing' && (
+            <div className="flex flex-col gap-2">
+              {isBriefSuggestionsLoading ? (
+                <div className="text-sm text-gray-500">Loading suggestions...</div>
+              ) : briefSuggestedQuestions.length > 0 ? (
+                <>
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Suggested Questions</div>
+                  <div className="flex flex-wrap gap-2">
+                    {briefSuggestedQuestions.map((question) => (
+                      <button
+                        key={question}
+                        type="button"
+                        onClick={() => setBusinessGoalInput(question)}
+                        className="rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
+                      >
+                        {question}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </div>
           )}
 

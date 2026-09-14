@@ -25,6 +25,7 @@ export const CreateBriefPage: React.FC = () => {
     }, [briefDraft.firstReviewDate, briefDraft.launchDate, briefDraft.projectName, briefDraft.requestedBy, user?.displayName]);
 
     useEffect(() => {
+        console.log('CreateBriefPage mounted');
         resetAiDrawerSession('briefing');
         setAiDrawerOpen(true);
     }, []);
