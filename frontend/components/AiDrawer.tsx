@@ -5,9 +5,9 @@ import { useAppContext } from '../context/AppContext';
 import { useChat } from '../src/hooks/useChat';
 
 const AiDrawer: React.FC = () => {
-    const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery } = useAppContext();
+    const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId } = useAppContext();
     const navigate = useNavigate();
-    const { sendMessage, isLoading } = useChat();
+    const { sendMessage, isLoading } = useChat(aiDrawerSessionId, aiDrawerMode);
     const [messages, setMessages] = useState<{role: 'user' | 'ai', text: string}[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
@@ -31,11 +31,7 @@ const AiDrawer: React.FC = () => {
 
         try {
             const result = await sendMessage(trimmedInput);
-            const aiText = typeof result?.response === 'string'
-                ? result.response
-                : typeof result?.message === 'string'
-                    ? result.message
-                    : '';
+            const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
 
             if (!aiText) {
                 throw new Error('The AI backend returned an empty response.');
@@ -66,12 +62,7 @@ const AiDrawer: React.FC = () => {
                     if (!isMounted) {
                         return;
                     }
-
-                    const aiText = typeof result?.response === 'string'
-                        ? result.response
-                        : typeof result?.message === 'string'
-                            ? result.message
-                            : '';
+                    const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
 
                     if (!aiText) {
                         throw new Error('The AI backend returned an empty response.');

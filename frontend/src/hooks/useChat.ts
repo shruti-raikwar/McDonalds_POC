@@ -1,29 +1,42 @@
-import { useCallback, useMemo, useState } from 'react';
-import { sendChatMessage } from '../api/chatApi';
+import { useCallback, useEffect, useState } from 'react';
+import { sendDashboardCampaignMessage } from '../api/dashboardCampaignApi';
 import { sessionService } from '../services/sessionService';
-import type { ChatResponse } from '../types/chat.types';
+import type { DashboardCampaignResponse } from '../types/chat.types';
+import type { AssistantContext } from '../../types';
 
 interface UseChatState {
   isLoading: boolean;
   error: string | null;
-  response: ChatResponse | null;
+  response: DashboardCampaignResponse | null;
   sessionId: string;
-  sendMessage: (message: string) => Promise<ChatResponse | null>;
+  sendMessage: (message: string) => Promise<DashboardCampaignResponse | null>;
   clearError: () => void;
   reset: () => void;
 }
 
-export const useChat = (sessionIdOverride?: string | null): UseChatState => {
+const isValidSessionId = (sessionId: string | null | undefined): sessionId is string => {
+  return typeof sessionId === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId);
+};
+
+const getDashboardSessionId = (sessionId: string | null | undefined): string => {
+  return isValidSessionId(sessionId) ? sessionId : sessionService.createSessionId();
+};
+
+export const useChat = (sessionIdOverride?: string | null, assistantContext?: AssistantContext): UseChatState => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [response, setResponse] = useState<ChatResponse | null>(null);
+  const [response, setResponse] = useState<DashboardCampaignResponse | null>(null);
 
-  const sessionId = useMemo(
-    () => sessionIdOverride || sessionService.getOrCreateSessionId(),
-    [sessionIdOverride],
+  const [sessionId, setSessionId] = useState(
+    () => getDashboardSessionId(sessionIdOverride),
   );
 
-  const sendMessage = useCallback(async (message: string): Promise<ChatResponse | null> => {
+  useEffect(() => {
+    setSessionId(getDashboardSessionId(sessionIdOverride));
+  }, [sessionIdOverride]);
+
+  const sendMessage = useCallback(async (message: string): Promise<DashboardCampaignResponse | null> => {
     const trimmedMessage = message.trim();
 
     if (!trimmedMessage) {
@@ -36,12 +49,20 @@ export const useChat = (sessionIdOverride?: string | null): UseChatState => {
     setError(null);
 
     try {
-      const result = await sendChatMessage({
-        user_id: sessionService.getOrCreateUserId(),
-        session_id: sessionId,
-        message: trimmedMessage,
+      if (assistantContext !== 'insight' && assistantContext !== 'segment') {
+        if (import.meta.env.DEV) console.error('Unsupported dashboard assistant context:', assistantContext);
+        throw new Error('This AI assistant is not configured for the current page.');
+      }
+
+      console.log('Sending message to Campaign Assistant API:', { message: trimmedMessage, agent_call: assistantContext, session_id: sessionId });
+      const result = await sendDashboardCampaignMessage({
+        query: trimmedMessage,
+        user_id: 'api-user',
+        session_id: crypto.randomUUID(),
+        agent_call: assistantContext,
       });
 
+      if (isValidSessionId(result.session_id)) setSessionId(result.session_id);
       setResponse(result);
       return result;
     } catch (caughtError) {
@@ -51,7 +72,7 @@ export const useChat = (sessionIdOverride?: string | null): UseChatState => {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [assistantContext, sessionId]);
 
   const clearError = useCallback(() => setError(null), []);
 

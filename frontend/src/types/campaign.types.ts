@@ -26,19 +26,23 @@ export interface CampaignBrief {
   [key: string]: unknown;
 }
 
+export interface CampaignApiResponse {
+  trace_id: string;
+  status: string;
+  business_goal: string;
+  result: string;
+  questions: string[] | null;
+  error: string | null;
+}
+
 export interface CampaignEvaluation {
   overall_confidence?: number | string;
   low_confidence_sections?: string[];
   [key: string]: unknown;
 }
 
-export interface CampaignResponse {
-  trace_id?: string;
-  status?: string;
+export interface CampaignResponse extends CampaignApiResponse {
   llm_backend?: string;
-  business_goal?: string;
-  error?: string | null;
-  brief?: CampaignBrief;
   evaluation?: CampaignEvaluation;
   requires_human_review?: boolean;
   human_decision?: string | null;
@@ -46,6 +50,6 @@ export interface CampaignResponse {
   [key: string]: unknown;
 }
 
-export interface CampaignRequest {
+export interface CreateBriefCampaignRequest {
   business_goal: string;
 }

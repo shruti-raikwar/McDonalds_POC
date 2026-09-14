@@ -4,10 +4,11 @@ import remarkGfm from 'remark-gfm';
 import { ArrowRight, Sparkles, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../../../context/AppContext';
+import { useAuth } from '../../../providers/AuthProvider';
 import { ROUTES } from '../../../routes/routePaths';
 import { useChat } from '../../../src/hooks/useChat';
 import { useCampaignGeneration } from '../../../src/hooks/useCampaignGeneration';
-import type { CampaignResponse } from '../../../src/types/campaign.types';
+import type { CampaignBrief, CampaignResponse } from '../../../src/types/campaign.types';
 import type { AiDrawerMode } from '../../../types';
 
 const PREDEFINED_BUSINESS_GOALS = [
@@ -17,12 +18,11 @@ const PREDEFINED_BUSINESS_GOALS = [
 interface CampaignPreview {
   businessGoal?: string;
   objective?: string;
+  tone?: string;
   targetSegments: string[];
   keyInsights: string[];
   recommendedChannels: string[];
   proposedKpis: string[];
-  lowConfidenceSections: string[];
-  overallConfidence?: string;
 }
 
 type DrawerMessage = {
@@ -74,10 +74,34 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => {
 
 const uniqueId = (prefix: string): string => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 
-const buildPreviewFromResponse = (response: CampaignResponse | null | undefined): CampaignPreview | null => {
-  if (!response || !response.brief) return null;
+interface DeserializedCampaignResponse {
+  response: CampaignResponse;
+  brief: CampaignBrief;
+}
 
-  const brief = response.brief;
+const isCampaignBrief = (value: unknown): value is CampaignBrief => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const deserializeCampaignResponse = (
+  response: CampaignResponse | null | undefined,
+): DeserializedCampaignResponse | null => {
+  if (!response || response.error !== null || typeof response.result !== 'string' || !response.result.trim()) return null;
+
+  try {
+    const brief = JSON.parse(response.result) as unknown;
+
+    return isCampaignBrief(brief) ? { response, brief } : null;
+  } catch {
+    return null;
+  }
+};
+
+const buildPreviewFromResponse = (response: CampaignResponse | null | undefined): CampaignPreview | null => {
+  const deserialized = deserializeCampaignResponse(response);
+  if (!deserialized) return null;
+
+  const { response: campaignResponse, brief } = deserialized;
   const targetSegments = Array.isArray(brief.target_segments)
     ? brief.target_segments
         .map((item) => (typeof item === 'object' && item && 'name' in item ? String(item.name).trim() : ''))
@@ -92,11 +116,7 @@ const buildPreviewFromResponse = (response: CampaignResponse | null | undefined)
 
   const recommendedChannels = Array.isArray(brief.recommended_channels)
     ? brief.recommended_channels
-        .map((item) => {
-          if (typeof item !== 'object' || !item) return '';
-          const why = 'why' in item ? String(item.why).trim() : 'justification' in item ? String(item.justification).trim() : '';
-          return why;
-        })
+        .map((item) => (typeof item === 'object' && item && 'channel' in item ? String(item.channel).trim() : ''))
         .filter(Boolean)
     : [];
 
@@ -104,40 +124,36 @@ const buildPreviewFromResponse = (response: CampaignResponse | null | undefined)
     ? brief.proposed_kpis.map((item) => String(item).trim()).filter(Boolean)
     : [];
 
-  const lowConfidenceSections = Array.isArray(response.evaluation?.low_confidence_sections)
-    ? response.evaluation!.low_confidence_sections.map((item) => String(item).trim()).filter(Boolean)
-    : [];
-
   return {
-    businessGoal: response.business_goal?.trim() || undefined,
-    objective: typeof brief.objective === 'string' ? brief.objective.trim() : undefined,
+    businessGoal: campaignResponse.business_goal?.trim() || undefined,
+    objective: typeof brief.title === 'string' ? brief.title.trim() : undefined,
+    tone: typeof brief.tone === 'string' ? brief.tone.trim() : undefined,
     targetSegments,
     keyInsights,
     recommendedChannels,
     proposedKpis,
-    lowConfidenceSections,
-    overallConfidence: response.evaluation && typeof response.evaluation.overall_confidence !== 'undefined'
-      ? String(response.evaluation.overall_confidence).trim()
-      : undefined,
   };
 };
 
 const isSuccessfulResponse = (response: CampaignResponse | null | undefined): boolean => {
-  if (!response) return false;
-  if (response.error) return false;
-  return response.status === 'pending_review' || !!response.brief || !!response.business_goal || !!response.trace_id;
+  return !!deserializeCampaignResponse(response);
 };
 
 export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
-  const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId, setAiDrawerMode, briefDraft, updateBriefData } = useAppContext();
+  const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId, assistantSourcePage, assistantContext, setAiDrawerMode, briefDraft, updateBriefData } = useAppContext();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const { sendMessage, isLoading, reset: resetChat } = useChat(aiDrawerSessionId);
-  const { isGenerating, campaignResult, generateCampaignFromGoal, clearResult } = useCampaignGeneration();
+  const { sendMessage, isLoading, reset: resetChat } = useChat(
+    assistantSourcePage === 'dashboard' ? aiDrawerSessionId : null,
+    assistantSourcePage === 'dashboard' ? assistantContext ?? undefined : undefined,
+  );
+  const { isGenerating, generateCampaignFromGoal, clearResult } = useCampaignGeneration();
   const [messages, setMessages] = useState<DrawerMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [businessGoalInput, setBusinessGoalInput] = useState(briefDraft.businessGoal);
   const [isTyping, setIsTyping] = useState(false);
   const [showAction, setShowAction] = useState(false);
+  const [pendingCampaignResponse, setPendingCampaignResponse] = useState<CampaignResponse | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const activeSessionRef = useRef<string | null>(null);
@@ -157,6 +173,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     setShowAction(false);
     resetChat();
     clearResult();
+    setPendingCampaignResponse(null);
     requestAnimationFrame(() => chatInputRef.current?.focus());
   }, [aiDrawerMode, aiDrawerSessionId, isAiDrawerOpen, clearResult, isToolMode, resetChat]);
 
@@ -184,11 +201,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         const result = await sendMessage(aiDrawerQuery);
         if (!isMounted) return;
 
-        const aiText = typeof result?.response === 'string'
-          ? result.response
-          : typeof result?.message === 'string'
-            ? result.message
-            : '';
+        const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
 
         if (!aiText) throw new Error('The AI backend returned an empty response.');
 
@@ -217,6 +230,16 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   const handleGeneralSendMessage = async () => {
     const trimmedInput = chatInput.trim();
     if (!trimmedInput || isLoading || isTyping || (aiDrawerMode !== 'general' && !isToolMode)) return;
+<<<<<<< HEAD
+=======
+    if (assistantSourcePage === 'createBrief' && aiDrawerMode === 'briefing') {
+      console.log('Current Page', assistantSourcePage);
+      console.log('Assistant Mode', aiDrawerMode);
+      console.log('Selected Endpoint', 'http://127.0.0.1:8001/api/campaigns');
+      await handleSubmitBusinessGoal(trimmedInput);
+      return;
+    }
+>>>>>>> origin/main
     const requestSessionId = activeSessionRef.current;
 
     setMessages((prev) => [...prev, { id: uniqueId('general-user'), role: 'user', kind: 'text', text: trimmedInput }]);
@@ -227,11 +250,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     try {
       const result = await sendMessage(trimmedInput);
       if (activeSessionRef.current !== requestSessionId) return;
-      const aiText = typeof result?.response === 'string'
-        ? result.response
-        : typeof result?.message === 'string'
-          ? result.message
-          : '';
+      const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
 
       if (!aiText) throw new Error('The AI backend returned an empty response.');
 
@@ -267,11 +286,11 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
   const handleSubmitBusinessGoal = async (value: string) => {
     const trimmedGoal = value.trim();
-    if (!trimmedGoal || isGenerating || aiDrawerMode !== 'business-goal') return;
+    if (!trimmedGoal || isGenerating || (aiDrawerMode !== 'business-goal' && aiDrawerMode !== 'briefing') || assistantSourcePage !== 'createBrief' || assistantContext !== 'briefing') return;
     const requestSessionId = activeSessionRef.current;
 
     appendBusinessGoalUser(trimmedGoal);
-    updateBriefData({ businessGoal: trimmedGoal });
+    setPendingCampaignResponse(null);
     setBusinessGoalInput('');
     setIsTyping(true);
     setShowAction(false);
@@ -280,20 +299,23 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       const result = await generateCampaignFromGoal(trimmedGoal);
       if (activeSessionRef.current !== requestSessionId) return;
       if (!result) throw new Error('The campaign backend returned an empty response.');
-      if (result.error) {
-        appendBusinessGoalError(result.error);
+      if (result.error !== null) {
+        appendBusinessGoalError('Unable to generate campaign brief.');
         return;
       }
-      if (!isSuccessfulResponse(result)) {
-        appendBusinessGoalError('The Business Goal campaign service returned an invalid response.');
+      const deserialized = deserializeCampaignResponse(result);
+      if (!isSuccessfulResponse(result) || !deserialized) {
+        appendBusinessGoalError('Unable to process Campaign API response.');
         return;
       }
+      setPendingCampaignResponse(result);
       appendBusinessGoalPreview(result);
     } catch (error) {
       if (activeSessionRef.current !== requestSessionId) return;
-      const fallbackError = error instanceof Error
-        ? error.message
-        : 'Unable to connect to the Business Goal campaign service. Verify that the backend is running on port 8001.';
+      const caughtMessage = error instanceof Error ? error.message : '';
+      const fallbackError = caughtMessage.includes('Campaign Brief API is running')
+        ? 'Unable to connect to Campaign Brief API.'
+        : caughtMessage || 'Unable to connect to Campaign Brief API.';
       appendBusinessGoalError(fallbackError);
     } finally {
       if (activeSessionRef.current === requestSessionId) setIsTyping(false);
@@ -301,18 +323,19 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   };
 
   const handleAcceptAndApply = () => {
-    if (!campaignResult || !campaignResult.brief || campaignResult.error) return;
+    const deserialized = deserializeCampaignResponse(pendingCampaignResponse);
+    if (!deserialized) return;
 
     const nextUpdate: Partial<typeof briefDraft> = {};
-    const brief = campaignResult.brief;
+    const { response, brief } = deserialized;
 
-    const businessGoal = campaignResult.business_goal?.trim();
-    const marketingGoal = typeof campaignResult?.brief?.title === 'string'
-      ? campaignResult.brief.title.trim()
+    const businessGoal = response.business_goal?.trim();
+    const marketingGoal = typeof brief.title === 'string'
+      ? brief.title.trim()
       : typeof brief.objective === 'string'
         ? brief.objective.trim()
         : '';
-    const tone = typeof campaignResult?.brief?.tone === 'string' ? campaignResult.brief.tone.trim() : '';
+    const tone = typeof brief.tone === 'string' ? brief.tone.trim() : '';
     const targetAudience = Array.isArray(brief.target_segments)
       ? brief.target_segments
           .map((item) => (typeof item === 'object' && item && 'name' in item ? String(item.name).trim() : ''))
@@ -329,7 +352,11 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       ? brief.recommended_channels
           .map((item) => {
             if (typeof item !== 'object' || !item) return '';
-            return 'why' in item ? String(item.why).trim() : 'justification' in item ? String(item.justification).trim() : '';
+            return 'rationale' in item
+              ? String(item.rationale).trim()
+              : 'justification' in item
+                ? String(item.justification).trim()
+                : '';
           })
           .filter(Boolean)
           .join(', ')
@@ -344,6 +371,8 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       ? brief.proposed_kpis.map((item) => String(item).trim()).filter(Boolean).join(', ')
       : '';
 
+    nextUpdate.projectName = 'MacDonalds';
+    nextUpdate.requestedBy = user?.displayName || user?.email || '';
     if (businessGoal) nextUpdate.businessGoal = businessGoal;
     if (marketingGoal) nextUpdate.marketingGoal = marketingGoal;
     if (tone) nextUpdate.tone = tone;
@@ -357,13 +386,12 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       updateBriefData(nextUpdate);
     }
 
-    appendConfirmation('Business Goal draft accepted and applied to the brief.');
+    appendConfirmation('Response applied to the Feel Brief form.');
   };
 
-  const handleEditBusinessGoal = () => {
-    setAiDrawerMode('business-goal');
-    setAiDrawerOpen(true);
-    setBusinessGoalInput(briefDraft.businessGoal);
+  const handleCancelCampaignResponse = () => {
+    appendConfirmation('Response kept in the conversation. No form fields were changed.');
+    setPendingCampaignResponse(null);
   };
 
   const renderMessage = (message: DrawerMessage) => {
@@ -382,24 +410,33 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     if (message.kind === 'preview' && message.preview) {
       const sections = [
         { label: 'Business Goal', value: message.preview.businessGoal },
-        { label: 'Objective', value: message.preview.objective },
-        { label: 'Target segment names', value: message.preview.targetSegments.length ? message.preview.targetSegments.join('\n') : undefined },
-        { label: 'Key insight statements', value: message.preview.keyInsights.length ? message.preview.keyInsights.join(', ') : undefined },
-        { label: 'Recommended channels', value: message.preview.recommendedChannels.length ? message.preview.recommendedChannels.join(', ') : undefined },
-        { label: 'Proposed KPIs', value: message.preview.proposedKpis.length ? message.preview.proposedKpis.join(', ') : undefined },
-        { label: 'Low-confidence sections', value: message.preview.lowConfidenceSections.length ? message.preview.lowConfidenceSections.join(', ') : undefined },
-        { label: 'Overall confidence', value: message.preview.overallConfidence },
-      ].filter((section) => section.value && String(section.value).trim().length > 0);
+        { label: 'Marketing Goal', value: message.preview.objective },
+        { label: 'Tone', value: message.preview.tone },
+        { label: 'Target Audience', items: message.preview.targetSegments },
+        { label: 'Key Insights', items: message.preview.keyInsights },
+        { label: 'Recommended Channels', items: message.preview.recommendedChannels },
+        { label: 'Executional Mandatories', items: message.preview.proposedKpis },
+      ].filter((section) => section.items ? section.items.length > 0 : section.value && String(section.value).trim().length > 0);
 
       return (
         <div className="space-y-4">
-          <div className="text-sm font-semibold text-slate-900">Generated draft preview</div>
+          <div className="text-sm font-semibold text-slate-900">🤖 AI Generated Campaign Brief</div>
           {sections.map((section) => (
             <div key={section.label} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-500">{section.label}</div>
-              <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{section.value}</div>
+              {section.items ? (
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {section.items.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              ) : (
+                <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{section.value}</div>
+              )}
             </div>
           ))}
+
+          <div className="text-sm font-medium text-slate-900">
+            Would you like to use this response to populate the Feel Brief form?
+          </div>
 
           <div className="flex flex-wrap gap-2 pt-1">
             <button
@@ -407,26 +444,14 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
               onClick={handleAcceptAndApply}
               className="rounded-full bg-mcd-black px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition-colors"
             >
-              Accept and apply
+              Use Response
             </button>
             <button
               type="button"
-              onClick={() => {
-                const currentGoal = briefDraft.businessGoal || businessGoalInput || '';
-                if (currentGoal) {
-                  void handleSubmitBusinessGoal(currentGoal);
-                }
-              }}
+              onClick={handleCancelCampaignResponse}
               className="rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
             >
-              Regenerate
-            </button>
-            <button
-              type="button"
-              onClick={handleEditBusinessGoal}
-              className="rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Edit Business Goal
+              Cancel
             </button>
           </div>
         </div>

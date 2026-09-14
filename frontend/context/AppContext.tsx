@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { AppState, AppUser, Insight, BriefData, AiDrawerMode } from '../types';
+import { AppState, AppUser, Insight, BriefData, AiDrawerMode, AssistantContext, AssistantSourcePage } from '../types';
 import { INITIAL_BRIEF_DATA } from '../constants';
 import { auth } from '../config/firebase';
 import { sessionService } from '../src/services/sessionService';
@@ -25,6 +25,7 @@ interface AppContextType extends AppState {
     setAiDrawerMode: (mode: AiDrawerMode) => void;
     resetAiDrawerSession: (mode: AiDrawerMode) => void;
     openAiTool: (mode: Extract<AiDrawerMode, 'briefing' | 'research' | 'audiences' | 'analysis'>) => void;
+    setAssistantContext: (sourcePage: AssistantSourcePage, context: AssistantContext, sessionId?: string | null) => void;
     resetBrief: () => void;
 }
 
@@ -41,6 +42,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [aiDrawerQuery, setAiDrawerQuery] = useState('');
     const [aiDrawerMode, setAiDrawerMode] = useState<AiDrawerMode>('general');
     const [aiDrawerSessionId, setAiDrawerSessionId] = useState<string | null>(null);
+    const [assistantSourcePage, setAssistantSourcePage] = useState<AssistantSourcePage | null>(null);
+    const [assistantContext, setAssistantContextState] = useState<AssistantContext | null>(null);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -114,16 +117,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     const openAiTool = (mode: Extract<AiDrawerMode, 'briefing' | 'research' | 'audiences' | 'analysis'>) => {
+        const context = mode === 'research' ? 'insight' : mode === 'audiences' ? 'segment' : null;
+        if (!context) return;
         setAiDrawerMode(mode);
         setAiDrawerQuery('');
         setAiDrawerSessionId(sessionService.createSessionId());
+        setAssistantSourcePage('dashboard');
+        setAssistantContextState(context);
         setAiDrawerOpen(true);
     };
 
     const resetAiDrawerSession = (mode: AiDrawerMode) => {
         setAiDrawerMode(mode);
         setAiDrawerQuery('');
-        setAiDrawerSessionId(sessionService.createSessionId());
+        setAiDrawerSessionId(null);
+        setAssistantSourcePage('createBrief');
+        setAssistantContextState('briefing');
+    };
+
+    const setAssistantContext = (sourcePage: AssistantSourcePage, context: AssistantContext, sessionId?: string | null) => {
+        setAssistantSourcePage(sourcePage);
+        setAssistantContextState(context);
+        setAiDrawerSessionId(sessionId === undefined ? sessionService.createSessionId() : sessionId);
     };
 
     return (
@@ -137,6 +152,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             aiDrawerQuery,
             aiDrawerMode,
             aiDrawerSessionId,
+            assistantSourcePage,
+            assistantContext,
             signUp,
             signIn,
             logout,
@@ -148,6 +165,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setAiDrawerMode,
             resetAiDrawerSession,
             openAiTool,
+            setAssistantContext,
             resetBrief
         }}>
             {children}

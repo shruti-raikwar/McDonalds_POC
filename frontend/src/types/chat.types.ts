@@ -1,16 +1,17 @@
-export interface ChatRequest {
-  user_id: string;
+export interface DashboardCampaignRequest {
+  query: string;
+  user_id: 'api-user';
   session_id: string;
-  message: string;
+  agent_call: 'insight' | 'segment';
 }
 
-export interface ChatResponse {
-  // TODO: Confirm the backend response schema from the API contract.
+export interface DashboardCampaignResponse {
+  session_id?: string;
+  final_response?: string;
+  draft_brief?: string;
   response?: string;
-  message?: string;
-  data?: unknown;
-  status?: string;
-  error?: string;
+  insights?: string;
+  segments?: string;
   [key: string]: unknown;
 }
 
