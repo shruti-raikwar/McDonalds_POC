@@ -230,8 +230,6 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   const handleGeneralSendMessage = async () => {
     const trimmedInput = chatInput.trim();
     if (!trimmedInput || isLoading || isTyping || (aiDrawerMode !== 'general' && !isToolMode)) return;
-<<<<<<< HEAD
-=======
     if (assistantSourcePage === 'createBrief' && aiDrawerMode === 'briefing') {
       console.log('Current Page', assistantSourcePage);
       console.log('Assistant Mode', aiDrawerMode);
@@ -239,7 +237,6 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       await handleSubmitBusinessGoal(trimmedInput);
       return;
     }
->>>>>>> origin/main
     const requestSessionId = activeSessionRef.current;
 
     setMessages((prev) => [...prev, { id: uniqueId('general-user'), role: 'user', kind: 'text', text: trimmedInput }]);
