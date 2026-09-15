@@ -524,6 +524,24 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     navigate(ROUTES.CREATE_BRIEF);
   };
 
+  const renderMessageBubble = (message: DrawerMessage) => (
+    <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+      {message.role === 'ai' && (
+        <div className="w-8 h-8 rounded-full bg-mcd-yellow flex items-center justify-center mr-3 flex-shrink-0">
+          <Sparkles size={14} className="text-white" />
+        </div>
+      )}
+      <div className={`max-w-[90%] p-4 rounded-2xl text-sm ${
+        message.role === 'user' ? 'bg-gray-100 text-mcd-black rounded-tr-sm' : 'bg-white border border-gray-100 shadow-sm text-mcd-black rounded-tl-sm'
+      }`}>
+        {renderMessage(message)}
+      </div>
+    </div>
+  );
+
+  const welcomeMessage = isToolMode ? messages[0] : undefined;
+  const conversationMessages = isToolMode ? messages.slice(1) : messages;
+
   return (
     <>
       {!embedded && <div className="fixed inset-0 bg-black/20 z-40 transition-opacity" onClick={() => setAiDrawerOpen(false)} />}
@@ -542,35 +560,10 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-          {messages.map((message) => (
-            <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {message.role === 'ai' && (
-                <div className="w-8 h-8 rounded-full bg-mcd-yellow flex items-center justify-center mr-3 flex-shrink-0">
-                  <Sparkles size={14} className="text-white" />
-                </div>
-              )}
-              <div className={`max-w-[90%] p-4 rounded-2xl text-sm ${
-                message.role === 'user' ? 'bg-gray-100 text-mcd-black rounded-tr-sm' : 'bg-white border border-gray-100 shadow-sm text-mcd-black rounded-tl-sm'
-              }`}>
-                {renderMessage(message)}
-              </div>
-            </div>
-          ))}
+        <div className="min-h-0 flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+          {welcomeMessage && <div>{renderMessageBubble(welcomeMessage)}</div>}
 
-          {isTyping && (
-            <div className="flex justify-start items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-mcd-yellow flex items-center justify-center flex-shrink-0">
-                <Sparkles size={14} className="text-white" />
-              </div>
-              <div className="flex gap-1 bg-white border border-gray-100 shadow-sm p-4 rounded-2xl rounded-tl-sm">
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-              </div>
-            </div>
-          )}
-
+        <div>
           {assistantSourcePage === 'dashboard' && (aiDrawerMode === 'research' || aiDrawerMode === 'audiences') && (
             <div className="flex flex-col gap-2">
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Suggested Questions</div>
@@ -606,7 +599,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                       <button
                         key={question}
                         type="button"
-                        onClick={() => setBusinessGoalInput(question)}
+                        onClick={() => void handleSubmitBusinessGoal(question)}
                         className="rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
                       >
                         {question}
@@ -615,6 +608,23 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                   </div>
                 </>
               ) : null}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-6">
+          {conversationMessages.map(renderMessageBubble)}
+
+          {isTyping && (
+            <div className="flex justify-start items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-mcd-yellow flex items-center justify-center flex-shrink-0">
+                <Sparkles size={14} className="text-white" />
+              </div>
+              <div className="flex gap-1 bg-white border border-gray-100 shadow-sm p-4 rounded-2xl rounded-tl-sm">
+                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+              </div>
             </div>
           )}
 
@@ -630,6 +640,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
             </div>
           )}
           <div ref={messagesEndRef} />
+        </div>
         </div>
 
         {aiDrawerMode === 'general' || isToolMode ? (
