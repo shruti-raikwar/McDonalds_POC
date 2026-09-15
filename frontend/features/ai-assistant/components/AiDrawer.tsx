@@ -9,6 +9,7 @@ import { useAuth } from '../../../providers/AuthProvider';
 import { ROUTES } from '../../../routes/routePaths';
 import { useChat } from '../../../src/hooks/useChat';
 import { useCampaignGeneration } from '../../../src/hooks/useCampaignGeneration';
+import { apiClient } from '../../../src/api/client';
 import type { CampaignBrief, CampaignResponse } from '../../../src/types/campaign.types';
 import type { AiDrawerMode } from '../../../types';
 
@@ -32,11 +33,19 @@ type DrawerMessage = {
   kind: 'text' | 'error' | 'preview' | 'confirmation';
   text?: string;
   preview?: CampaignPreview;
+  followUpQuestions?: string[];
+  isFollowUpQuestionsLoading?: boolean;
 };
 
 interface CampaignFollowUpResponse {
   agent_call: string;
-  questions: string[];
+  questions?: string[];
+  follow_up_questions?: string[];
+}
+
+interface CampaignFollowUpRequest {
+  agent_call: 'brief';
+  context: string;
 }
 
 const TOOL_WELCOME_MESSAGES: Record<Extract<AiDrawerMode, 'briefing' | 'research' | 'audiences' | 'analysis'>, string> = {
@@ -259,8 +268,19 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
         if (!aiText) throw new Error('The AI backend returned an empty response.');
 
-        setMessages((prev) => [...prev, { id: uniqueId('general-ai'), role: 'ai', kind: 'text', text: aiText }]);
+        const aiMessageId = uniqueId('general-ai');
+        setMessages((prev) => [...prev, { id: aiMessageId, role: 'ai', kind: 'text', text: aiText, isFollowUpQuestionsLoading: true }]);
         setShowAction(true);
+        const followUpQuestions = await loadFollowUpSuggestions(aiText);
+        if (followUpQuestions) {
+          setMessages((prev) => prev.map((message) => message.id === aiMessageId
+            ? { ...message, followUpQuestions, isFollowUpQuestionsLoading: false }
+            : message));
+        } else {
+          setMessages((prev) => prev.map((message) => message.id === aiMessageId
+            ? { ...message, isFollowUpQuestionsLoading: false }
+            : message));
+        }
       } catch (error) {
         if (!isMounted) return;
         const fallbackError = error instanceof Error ? error.message : 'I could not reach the AI service right now.';
@@ -305,8 +325,19 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
       if (!aiText) throw new Error('The AI backend returned an empty response.');
 
-      setMessages((prev) => [...prev, { id: uniqueId('general-ai'), role: 'ai', kind: 'text', text: aiText }]);
+      const aiMessageId = uniqueId('general-ai');
+      setMessages((prev) => [...prev, { id: aiMessageId, role: 'ai', kind: 'text', text: aiText, isFollowUpQuestionsLoading: true }]);
       setShowAction(true);
+      const followUpQuestions = await loadFollowUpSuggestions(aiText);
+      if (followUpQuestions) {
+        setMessages((prev) => prev.map((message) => message.id === aiMessageId
+          ? { ...message, followUpQuestions, isFollowUpQuestionsLoading: false }
+          : message));
+      } else {
+        setMessages((prev) => prev.map((message) => message.id === aiMessageId
+          ? { ...message, isFollowUpQuestionsLoading: false }
+          : message));
+      }
     } catch (error) {
       if (activeSessionRef.current !== requestSessionId) return;
       const fallbackError = error instanceof Error ? error.message : 'I could not reach the AI service right now.';
@@ -325,14 +356,55 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     setMessages((prev) => [...prev, { id: uniqueId('bg-error'), role: 'ai', kind: 'error', text: message }]);
   };
 
-  const appendBusinessGoalPreview = (response: CampaignResponse | null | undefined) => {
+  const appendBusinessGoalPreview = (response: CampaignResponse | null | undefined): string | null => {
     const preview = buildPreviewFromResponse(response);
-    if (!preview) return;
-    setMessages((prev) => [...prev, { id: uniqueId('bg-preview'), role: 'ai', kind: 'preview', preview }]);
+    if (!preview || typeof response?.result !== 'string' || !response.result.trim()) return null;
+    const previewMessageId = uniqueId('bg-preview');
+    setMessages((prev) => [...prev, {
+      id: previewMessageId,
+      role: 'ai',
+      kind: 'preview',
+      preview,
+      followUpQuestions: [],
+      isFollowUpQuestionsLoading: true,
+    }]);
+    return previewMessageId;
   };
 
   const appendConfirmation = (message: string) => {
     setMessages((prev) => [...prev, { id: uniqueId('bg-confirm'), role: 'ai', kind: 'confirmation', text: message }]);
+  };
+
+  const loadBriefFollowUpQuestions = async (finalResponse: string, previewMessageId: string) => {
+    try {
+      const followUpPayload: CampaignFollowUpRequest = {
+        agent_call: 'brief',
+        context: finalResponse,
+      };
+      const response = await axios.post<CampaignFollowUpResponse>(
+        'http://127.0.0.1:8001/api/campaign_followups',
+        followUpPayload,
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+      const questions = (Array.isArray(response.data.questions)
+        ? response.data.questions
+        : Array.isArray(response.data.follow_up_questions)
+          ? response.data.follow_up_questions
+          : [])
+        .filter((question): question is string => typeof question === 'string')
+        .map((question) => question.trim())
+        .filter(Boolean)
+        .filter((question, index, allQuestions) => allQuestions.indexOf(question) === index);
+
+      setMessages((previous) => previous.map((message) => message.id === previewMessageId
+        ? { ...message, followUpQuestions: questions, isFollowUpQuestionsLoading: false }
+        : message));
+    } catch (error) {
+      console.warn('Failed to load campaign response follow-up questions', error);
+      setMessages((previous) => previous.map((message) => message.id === previewMessageId
+        ? { ...message, isFollowUpQuestionsLoading: false }
+        : message));
+    }
   };
 
   const handleSubmitBusinessGoal = async (value: string) => {
@@ -360,7 +432,10 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         return;
       }
       setPendingCampaignResponse(result);
-      appendBusinessGoalPreview(result);
+      const previewMessageId = appendBusinessGoalPreview(result);
+      if (previewMessageId && typeof result.result === 'string' && result.result.trim()) {
+        void loadBriefFollowUpQuestions(result.result, previewMessageId);
+      }
     } catch (error) {
       if (activeSessionRef.current !== requestSessionId) return;
       const caughtMessage = error instanceof Error ? error.message : '';
@@ -535,12 +610,61 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         message.role === 'user' ? 'bg-gray-100 text-mcd-black rounded-tr-sm' : 'bg-white border border-gray-100 shadow-sm text-mcd-black rounded-tl-sm'
       }`}>
         {renderMessage(message)}
+        {message.role === 'ai' && (message.isFollowUpQuestionsLoading || message.followUpQuestions && message.followUpQuestions.length > 0) && (
+          <div className={assistantSourcePage === 'createBrief' && message.kind === 'preview'
+            ? 'mt-4 border-t border-gray-100 pt-4 pb-4'
+            : 'mt-4 border-t border-gray-100 pt-3'}>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">Follow-up Questions</div>
+            {message.isFollowUpQuestionsLoading ? (
+              <div className={assistantSourcePage === 'createBrief' && message.kind === 'preview' ? 'text-sm leading-6 text-gray-500' : 'text-sm text-gray-500'}>
+                {assistantSourcePage === 'createBrief' && message.kind === 'preview' ? 'Loading follow-up questions...' : 'Updating suggestions...'}
+              </div>
+            ) : (
+              <div className={assistantSourcePage === 'createBrief' && message.kind === 'preview' ? 'flex w-full flex-col gap-2' : 'flex flex-wrap gap-2'}>
+                {message.followUpQuestions?.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => void (assistantSourcePage === 'createBrief'
+                      ? handleSubmitBusinessGoal(question)
+                      : handleGeneralSendMessage(question))}
+                    disabled={isLoading || isTyping}
+                    className={assistantSourcePage === 'createBrief' && message.kind === 'preview'
+                      ? 'w-full cursor-pointer rounded-3xl border border-gray-200 bg-[#F8F8F8] px-4 py-3 text-left text-sm font-medium leading-[1.5] text-gray-700 transition-all duration-200 hover:-translate-y-px hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60'
+                      : 'rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60'}
+                  >
+                    <span className={assistantSourcePage === 'createBrief' && message.kind === 'preview' ? 'line-clamp-3' : undefined}>{question}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 
   const welcomeMessage = isToolMode ? messages[0] : undefined;
   const conversationMessages = isToolMode ? messages.slice(1) : messages;
+
+  const loadFollowUpSuggestions = async (finalResponse: string): Promise<string[] | null> => {
+    if (assistantSourcePage !== 'dashboard' || (assistantContext !== 'insight' && assistantContext !== 'segment')) return null;
+
+    try {
+      const response = await apiClient.post<{ follow_up_questions?: string[] }>('/follow-up-questions', {
+        agent_call: assistantContext,
+        final_response: finalResponse,
+      });
+
+      if (Array.isArray(response.data.follow_up_questions)) {
+        return response.data.follow_up_questions;
+      }
+    } catch {
+      console.log('Failed to load follow-up suggestions.');
+    }
+
+    return null;
+  };
 
   return (
     <>
