@@ -11,7 +11,10 @@ import { useChat } from '../../../src/hooks/useChat';
 import { useCampaignGeneration } from '../../../src/hooks/useCampaignGeneration';
 import { apiClient } from '../../../src/api/client';
 import type { CampaignBrief, CampaignResponse } from '../../../src/types/campaign.types';
+import type { DashboardCampaignResponse } from '../../../src/types/chat.types';
 import type { AiDrawerMode } from '../../../types';
+
+const ASSISTANT_FALLBACK_MESSAGE = "I couldn't generate a response.";
 
 const PREDEFINED_BUSINESS_GOALS = [
   'Drive weekday lunch traffic for the new spicy chicken wrap',
@@ -154,6 +157,37 @@ const isSuccessfulResponse = (response: CampaignResponse | null | undefined): bo
   return !!deserializeCampaignResponse(response);
 };
 
+export const extractAssistantContent = (
+  response: DashboardCampaignResponse | null | undefined,
+): string => {
+  const content = [response?.final_response, response?.draft_brief]
+    .find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return typeof content === 'string' ? content.trim() : '';
+};
+
+export const isValidAssistantResponse = (
+  response: DashboardCampaignResponse | null | undefined,
+  content: string,
+): boolean => {
+  if (!response || !content || content.toLowerCase() === ASSISTANT_FALLBACK_MESSAGE.toLowerCase()) return false;
+  if (response.error) return false;
+
+  const normalizedStatus = typeof response.status === 'string' ? response.status.trim().toLowerCase() : '';
+  return !['error', 'failed', 'failure', 'fallback'].includes(normalizedStatus);
+};
+
+export const shouldGenerateFollowUps = (
+  response: DashboardCampaignResponse | null | undefined,
+  content: string,
+): boolean => {
+  if (!response) return false;
+  if (response.intent?.trim().toLowerCase() === 'other') return false;
+
+  const normalizedContent = content.toLowerCase();
+  return !normalizedContent.includes('outside the scope of the marketing campaign brief agent')
+    && !normalizedContent.includes('please provide a marketing business goal');
+};
+
 export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { isAiDrawerOpen, setAiDrawerOpen, aiDrawerQuery, aiDrawerMode, aiDrawerSessionId, assistantSourcePage, assistantContext, setAiDrawerMode, briefDraft, updateBriefData, suggestedQuestions: dashboardSuggestedQuestions, areSuggestedQuestionsLoading: areDashboardSuggestedQuestionsLoading } = useAppContext();
   const { user } = useAuth();
@@ -173,7 +207,9 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   const [isBriefSuggestionsLoading, setIsBriefSuggestionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const businessGoalInputRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const activeSubmissionRef = useRef<string | null>(null);
   const hasLoadedBriefFollowUpsRef = useRef(false);
 
   const isToolMode = aiDrawerMode in TOOL_WELCOME_MESSAGES;
@@ -188,6 +224,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     setMessages([{ id: uniqueId(`${aiDrawerMode}-welcome`), role: 'ai', kind: 'text', text: TOOL_WELCOME_MESSAGES[aiDrawerMode as keyof typeof TOOL_WELCOME_MESSAGES] }]);
     setChatInput('');
     setIsTyping(false);
+    activeSubmissionRef.current = null;
     setShowAction(false);
     resetChat();
     clearResult();
@@ -264,14 +301,27 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         const result = await sendMessage(aiDrawerQuery);
         if (!isMounted) return;
 
-        const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
-
-        if (!aiText) throw new Error('The AI backend returned an empty response.');
+        const aiText = extractAssistantContent(result);
+        if (!isValidAssistantResponse(result, aiText)) {
+          setMessages((prev) => [...prev, { id: uniqueId('general-ai'), role: 'ai', kind: 'text', text: ASSISTANT_FALLBACK_MESSAGE }]);
+          setShowAction(true);
+          return;
+        }
 
         const aiMessageId = uniqueId('general-ai');
-        setMessages((prev) => [...prev, { id: aiMessageId, role: 'ai', kind: 'text', text: aiText, isFollowUpQuestionsLoading: true }]);
+        const generateFollowUps = shouldGenerateFollowUps(result, aiText);
+        setMessages((prev) => [...prev, {
+          id: aiMessageId,
+          role: 'ai',
+          kind: 'text',
+          text: aiText,
+          isFollowUpQuestionsLoading: generateFollowUps,
+        }]);
         setShowAction(true);
+        if (!generateFollowUps) return;
+
         const followUpQuestions = await loadFollowUpSuggestions(aiText);
+        if (!isMounted) return;
         if (followUpQuestions) {
           setMessages((prev) => prev.map((message) => message.id === aiMessageId
             ? { ...message, followUpQuestions, isFollowUpQuestionsLoading: false }
@@ -301,9 +351,29 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleGeneralSendMessage = async (question?: string) => {
-    const trimmedInput = (question ?? chatInput).trim();
-    if (!trimmedInput || isLoading || isTyping || (aiDrawerMode !== 'general' && !isToolMode)) return;
+  const clearPreviousFollowUpQuestions = () => {
+    setMessages((previous) => previous.map((message) => (
+      message.followUpQuestions || message.isFollowUpQuestionsLoading
+        ? { ...message, followUpQuestions: [], isFollowUpQuestionsLoading: false }
+        : message
+    )));
+  };
+
+  const populateSuggestionInput = (question: string) => {
+    if (aiDrawerMode === 'business-goal') {
+      setBusinessGoalInput(question);
+      requestAnimationFrame(() => businessGoalInputRef.current?.focus());
+      return;
+    }
+
+    setChatInput(question);
+    requestAnimationFrame(() => chatInputRef.current?.focus());
+  };
+
+  const handleGeneralSendMessage = async () => {
+    const trimmedInput = chatInput.trim();
+    if (!trimmedInput || isLoading || isTyping || activeSubmissionRef.current || (aiDrawerMode !== 'general' && !isToolMode)) return;
+    clearPreviousFollowUpQuestions();
     if (assistantSourcePage === 'createBrief' && aiDrawerMode === 'briefing') {
       console.log('Current Page', assistantSourcePage);
       console.log('Assistant Mode', aiDrawerMode);
@@ -312,6 +382,8 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       return;
     }
     const requestSessionId = activeSessionRef.current;
+    const submissionId = uniqueId('submission');
+    activeSubmissionRef.current = submissionId;
 
     setMessages((prev) => [...prev, { id: uniqueId('general-user'), role: 'user', kind: 'text', text: trimmedInput }]);
     setChatInput('');
@@ -319,15 +391,27 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     setShowAction(false);
 
     try {
-      const result = await sendMessage(trimmedInput);
+      const result = await sendMessage(trimmedInput, { includeAgentCall: false });
       if (activeSessionRef.current !== requestSessionId) return;
-      const aiText = result?.final_response || result?.draft_brief || "I couldn't generate a response.";
-
-      if (!aiText) throw new Error('The AI backend returned an empty response.');
+      const aiText = extractAssistantContent(result);
+      if (!isValidAssistantResponse(result, aiText)) {
+        setMessages((prev) => [...prev, { id: uniqueId('general-ai'), role: 'ai', kind: 'text', text: ASSISTANT_FALLBACK_MESSAGE }]);
+        setShowAction(true);
+        return;
+      }
 
       const aiMessageId = uniqueId('general-ai');
-      setMessages((prev) => [...prev, { id: aiMessageId, role: 'ai', kind: 'text', text: aiText, isFollowUpQuestionsLoading: true }]);
+      const generateFollowUps = shouldGenerateFollowUps(result, aiText);
+      setMessages((prev) => [...prev, {
+        id: aiMessageId,
+        role: 'ai',
+        kind: 'text',
+        text: aiText,
+        isFollowUpQuestionsLoading: generateFollowUps,
+      }]);
       setShowAction(true);
+      if (!generateFollowUps) return;
+
       const followUpQuestions = await loadFollowUpSuggestions(aiText);
       if (followUpQuestions) {
         setMessages((prev) => prev.map((message) => message.id === aiMessageId
@@ -344,7 +428,8 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
       setMessages((prev) => [...prev, { id: uniqueId('general-error'), role: 'ai', kind: 'text', text: fallbackError }]);
       setShowAction(true);
     } finally {
-      setIsTyping(false);
+      if (activeSubmissionRef.current === submissionId) activeSubmissionRef.current = null;
+      if (activeSessionRef.current === requestSessionId) setIsTyping(false);
     }
   };
 
@@ -409,9 +494,12 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
   const handleSubmitBusinessGoal = async (value: string) => {
     const trimmedGoal = value.trim();
-    if (!trimmedGoal || isGenerating || (aiDrawerMode !== 'business-goal' && aiDrawerMode !== 'briefing') || assistantSourcePage !== 'createBrief' || assistantContext !== 'briefing') return;
+    if (!trimmedGoal || isGenerating || activeSubmissionRef.current || (aiDrawerMode !== 'business-goal' && aiDrawerMode !== 'briefing') || assistantSourcePage !== 'createBrief' || assistantContext !== 'briefing') return;
     const requestSessionId = activeSessionRef.current;
+    const submissionId = uniqueId('submission');
+    activeSubmissionRef.current = submissionId;
 
+    clearPreviousFollowUpQuestions();
     appendBusinessGoalUser(trimmedGoal);
     setPendingCampaignResponse(null);
     setBusinessGoalInput('');
@@ -444,6 +532,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         : caughtMessage || 'Unable to connect to Campaign Brief API.';
       appendBusinessGoalError(fallbackError);
     } finally {
+      if (activeSubmissionRef.current === submissionId) activeSubmissionRef.current = null;
       if (activeSessionRef.current === requestSessionId) setIsTyping(false);
     }
   };
@@ -625,9 +714,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                   <button
                     key={question}
                     type="button"
-                    onClick={() => void (assistantSourcePage === 'createBrief'
-                      ? handleSubmitBusinessGoal(question)
-                      : handleGeneralSendMessage(question))}
+                    onClick={() => populateSuggestionInput(question)}
                     disabled={isLoading || isTyping}
                     className={assistantSourcePage === 'createBrief' && message.kind === 'preview'
                       ? 'w-full cursor-pointer rounded-3xl border border-gray-200 bg-[#F8F8F8] px-4 py-3 text-left text-sm font-medium leading-[1.5] text-gray-700 transition-all duration-200 hover:-translate-y-px hover:border-gray-300 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60'
@@ -699,7 +786,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                     <button
                       key={question}
                       type="button"
-                      onClick={() => void handleGeneralSendMessage(question)}
+                      onClick={() => populateSuggestionInput(question)}
                       disabled={isLoading || isTyping}
                       className="rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -723,7 +810,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                       <button
                         key={question}
                         type="button"
-                        onClick={() => void handleSubmitBusinessGoal(question)}
+                        onClick={() => populateSuggestionInput(question)}
                         className="rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-100"
                       >
                         {question}
@@ -804,7 +891,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
                   <button
                     key={goal}
                     type="button"
-                    onClick={() => void handleSubmitBusinessGoal(goal)}
+                    onClick={() => populateSuggestionInput(goal)}
                     disabled={isGenerating}
                     className="rounded-full border border-mcd-yellow bg-yellow-50 px-3 py-2 text-xs font-medium text-mcd-black hover:bg-yellow-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -816,6 +903,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
             <div className="relative">
               <textarea
+                ref={businessGoalInputRef}
                 value={businessGoalInput}
                 onChange={(event) => setBusinessGoalInput(event.target.value)}
                 onKeyDown={(event) => {

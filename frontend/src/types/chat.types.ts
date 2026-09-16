@@ -2,7 +2,7 @@ export interface DashboardCampaignRequest {
   query: string;
   user_id: 'api-user';
   session_id: string;
-  agent_call: 'insight' | 'segment';
+  agent_call?: 'insight' | 'segment';
 }
 
 export interface DashboardCampaignResponse {
@@ -12,6 +12,9 @@ export interface DashboardCampaignResponse {
   response?: string;
   insights?: string;
   segments?: string;
+  intent?: string;
+  status?: string;
+  error?: unknown;
   [key: string]: unknown;
 }
 

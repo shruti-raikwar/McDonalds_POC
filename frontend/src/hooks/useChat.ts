@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { sendDashboardCampaignMessage } from '../api/dashboardCampaignApi';
 import { sessionService } from '../services/sessionService';
-import type { DashboardCampaignResponse } from '../types/chat.types';
+import type { DashboardCampaignRequest, DashboardCampaignResponse } from '../types/chat.types';
 import type { AssistantContext } from '../../types';
+
+interface SendMessageOptions {
+  includeAgentCall?: boolean;
+}
 
 interface UseChatState {
   isLoading: boolean;
   error: string | null;
   response: DashboardCampaignResponse | null;
   sessionId: string;
-  sendMessage: (message: string) => Promise<DashboardCampaignResponse | null>;
+  sendMessage: (message: string, options?: SendMessageOptions) => Promise<DashboardCampaignResponse | null>;
   clearError: () => void;
   reset: () => void;
 }
@@ -36,7 +40,10 @@ export const useChat = (sessionIdOverride?: string | null, assistantContext?: As
     setSessionId(getDashboardSessionId(sessionIdOverride));
   }, [sessionIdOverride]);
 
-  const sendMessage = useCallback(async (message: string): Promise<DashboardCampaignResponse | null> => {
+  const sendMessage = useCallback(async (
+    message: string,
+    options: SendMessageOptions = {},
+  ): Promise<DashboardCampaignResponse | null> => {
     const trimmedMessage = message.trim();
 
     if (!trimmedMessage) {
@@ -54,13 +61,15 @@ export const useChat = (sessionIdOverride?: string | null, assistantContext?: As
         throw new Error('This AI assistant is not configured for the current page.');
       }
 
-      console.log('Sending message to Campaign Assistant API:', { message: trimmedMessage, agent_call: assistantContext, session_id: sessionId });
-      const result = await sendDashboardCampaignMessage({
+      const requestSessionId = crypto.randomUUID();
+      const payload: DashboardCampaignRequest = {
         query: trimmedMessage,
         user_id: 'api-user',
-        session_id: crypto.randomUUID(),
-        agent_call: assistantContext,
-      });
+        session_id: requestSessionId,
+        ...(options.includeAgentCall === false ? {} : { agent_call: assistantContext }),
+      };
+      console.log('Sending message to Campaign Assistant API:', payload);
+      const result = await sendDashboardCampaignMessage(payload);
 
       if (isValidSessionId(result.session_id)) setSessionId(result.session_id);
       setResponse(result);
