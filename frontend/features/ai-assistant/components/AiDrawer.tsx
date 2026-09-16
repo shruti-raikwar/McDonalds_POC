@@ -101,6 +101,28 @@ const isCampaignBrief = (value: unknown): value is CampaignBrief => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
 
+const extractQuotedFieldValues = (content: string, field: string): string[] => {
+  const pattern = new RegExp(`['"]${field}['"]\\s*:\\s*(['"])(.*?)\\1`, 'g');
+  return Array.from(content.matchAll(pattern), (match) => match[2].trim()).filter(Boolean);
+};
+
+const parseTextCampaignBrief = (content: string): CampaignBrief | null => {
+  const objective = content.match(/^Objective:\s*(.+)$/im)?.[1].trim() ?? '';
+  const insights = extractQuotedFieldValues(content, 'statement');
+  const targetSegments = extractQuotedFieldValues(content, 'name');
+  const channels = extractQuotedFieldValues(content, 'channel');
+
+  if (!objective && insights.length === 0 && targetSegments.length === 0 && channels.length === 0) return null;
+
+  return {
+    title: objective || undefined,
+    objective: objective || undefined,
+    key_insights: insights.map((statement) => ({ statement })),
+    target_segments: targetSegments.map((name) => ({ name })),
+    recommended_channels: channels.map((channel) => ({ channel })),
+  };
+};
+
 const deserializeCampaignResponse = (
   response: CampaignResponse | null | undefined,
 ): DeserializedCampaignResponse | null => {
@@ -111,7 +133,8 @@ const deserializeCampaignResponse = (
 
     return isCampaignBrief(brief) ? { response, brief } : null;
   } catch {
-    return null;
+    const brief = parseTextCampaignBrief(response.result);
+    return brief ? { response, brief } : null;
   }
 };
 
