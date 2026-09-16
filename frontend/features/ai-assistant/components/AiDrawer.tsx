@@ -97,6 +97,11 @@ interface DeserializedCampaignResponse {
   brief: CampaignBrief;
 }
 
+interface PendingCampaignAction {
+  response: CampaignResponse;
+  previewMessageId: string;
+}
+
 const isCampaignBrief = (value: unknown): value is CampaignBrief => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
@@ -225,7 +230,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   const [businessGoalInput, setBusinessGoalInput] = useState(briefDraft.businessGoal);
   const [isTyping, setIsTyping] = useState(false);
   const [showAction, setShowAction] = useState(false);
-  const [pendingCampaignResponse, setPendingCampaignResponse] = useState<CampaignResponse | null>(null);
+  const [pendingCampaignAction, setPendingCampaignAction] = useState<PendingCampaignAction | null>(null);
   const [briefSuggestedQuestions, setBriefSuggestedQuestions] = useState<string[]>([]);
   const [isBriefSuggestionsLoading, setIsBriefSuggestionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -251,7 +256,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     setShowAction(false);
     resetChat();
     clearResult();
-    setPendingCampaignResponse(null);
+    setPendingCampaignAction(null);
     requestAnimationFrame(() => chatInputRef.current?.focus());
   }, [aiDrawerMode, aiDrawerSessionId, isAiDrawerOpen, clearResult, isToolMode, resetChat]);
 
@@ -524,7 +529,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
 
     clearPreviousFollowUpQuestions();
     appendBusinessGoalUser(trimmedGoal);
-    setPendingCampaignResponse(null);
+    setPendingCampaignAction(null);
     setBusinessGoalInput('');
     setIsTyping(true);
     setShowAction(false);
@@ -542,9 +547,9 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         appendBusinessGoalError('Unable to process Campaign API response.');
         return;
       }
-      setPendingCampaignResponse(result);
       const previewMessageId = appendBusinessGoalPreview(result);
       if (previewMessageId && typeof result.result === 'string' && result.result.trim()) {
+        setPendingCampaignAction({ response: result, previewMessageId });
         void loadBriefFollowUpQuestions(result.result, previewMessageId);
       }
     } catch (error) {
@@ -561,7 +566,7 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
   };
 
   const handleAcceptAndApply = () => {
-    const deserialized = deserializeCampaignResponse(pendingCampaignResponse);
+    const deserialized = deserializeCampaignResponse(pendingCampaignAction?.response);
     if (!deserialized) return;
 
     const nextUpdate: Partial<typeof briefDraft> = {};
@@ -625,11 +630,12 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
     }
 
     appendConfirmation('Response applied to the Feel Brief form.');
+    setPendingCampaignAction(null);
   };
 
   const handleCancelCampaignResponse = () => {
     appendConfirmation('Response kept in the conversation. No form fields were changed.');
-    setPendingCampaignResponse(null);
+    setPendingCampaignAction(null);
   };
 
   const renderMessage = (message: DrawerMessage) => {
@@ -672,26 +678,30 @@ export const AiDrawer: React.FC<{ embedded?: boolean }> = ({ embedded = false })
             </div>
           ))}
 
-          <div className="text-sm font-medium text-slate-900">
-            Would you like to use this response to populate the Feel Brief form?
-          </div>
+          {pendingCampaignAction?.previewMessageId === message.id && (
+            <>
+              <div className="text-sm font-medium text-slate-900">
+                Would you like to use this response to populate the Feel Brief form?
+              </div>
 
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleAcceptAndApply}
-              className="rounded-full bg-mcd-black px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition-colors"
-            >
-              Use Response
-            </button>
-            <button
-              type="button"
-              onClick={handleCancelCampaignResponse}
-              className="rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleAcceptAndApply}
+                  className="rounded-full bg-mcd-black px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition-colors"
+                >
+                  Use Response
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelCampaignResponse}
+                  className="rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
         </div>
       );
     }
